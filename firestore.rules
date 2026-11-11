@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /inventory/{itemId} {
+      allow read: if true;
+      allow create: if request.auth != null
+                    && request.auth.uid == "LUwBJEq0U6aGIfnURDmcn6HaTd73"
+                    && request.resource.data.name is string
+                    && request.resource.data.name.size() > 0
+                    && request.resource.data.name.size() <= 80
+                    && request.resource.data.quantity == 0;
+      allow update: if request.auth != null
+                    && request.auth.uid == "LUwBJEq0U6aGIfnURDmcn6HaTd73"
+                    && request.resource.data.name == resource.data.name
+                    && request.resource.data.quantity is int
+                    && request.resource.data.quantity >= 0;
+      allow delete: if request.auth != null
+                    && request.auth.uid == "LUwBJEq0U6aGIfnURDmcn6HaTd73";
+    }
+  }
+}
