@@ -3,14 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#0b1020">
+  <meta name="theme-color" content="#080b14">
   <title>Snack-Shack Inventory</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <div class="ambient ambient-one"></div>
   <div class="ambient ambient-two"></div>
-
   <main class="shell">
     <dialog id="loginDialog" class="login-dialog panel">
       <form id="authForm" method="dialog">
@@ -28,9 +27,7 @@
 
     <section id="appView" class="app">
       <header class="topbar">
-        <div>
-          <div class="brand"><span class="brand-mark">S</span><span>Snack-Shack</span></div>
-        </div>
+        <div class="brand"><span class="brand-mark">S</span><span>Snack-Shack</span></div>
         <div class="userbox">
           <span id="modeBadge" class="mode-badge">View only</span>
           <button id="loginOpenBtn" class="secondary small">Admin login</button>
@@ -39,38 +36,31 @@
       </header>
 
       <section class="hero panel">
-        <div class="hero-copy">
-          <p class="eyebrow">INVENTORY</p>
-          <h1>Live Snack Inventory</h1>
-          <p id="heroMessage" class="muted">Public view.</p>
-        </div>
-        <div class="stat"><span id="totalUnits">0</span><small>Total units</small></div>
+        <h1>Live Snack Inventory</h1>
       </section>
 
       <section class="payment-strip panel" aria-label="Payment methods">
-        <div class="payment-copy">
-          <span class="payment-label">PAYMENT</span>
-          <strong>Pay your snack your way</strong>
-        </div>
+        <div class="payment-copy"><span class="payment-label">PAYMENT</span></div>
         <div class="payment-methods">
           <span class="payment-chip twint"><span class="payment-icon">T</span>TWINT</span>
           <span class="payment-or">or</span>
-          <span class="payment-chip cash"><span class="payment-icon">Fr.</span>Cash</span>
+          <span class="payment-chip cash"><span class="payment-icon">Fr.</span>CHF</span>
         </div>
       </section>
 
       <section class="panel inventory">
         <div class="toolbar">
           <form id="addForm" class="add-form admin-only hidden">
-            <input id="itemInput" maxlength="80" required placeholder="Add an item…" aria-label="New item name">
-            <button class="primary" type="submit">+ Add item</button>
+            <input id="itemInput" maxlength="80" required placeholder="Product name" aria-label="Product name">
+            <input id="priceInput" type="number" min="0" step="0.05" inputmode="decimal" required placeholder="Price (CHF)" aria-label="Price in Swiss francs">
+            <input id="sizeInput" maxlength="30" placeholder="Size (e.g. 500 ML)" aria-label="Product size">
+            <button class="primary" type="submit">+ Add</button>
           </form>
           <div class="tools">
             <input id="searchInput" type="search" placeholder="Search…" aria-label="Search items">
             <button id="sortBtn" class="secondary" type="button">A–Z</button>
           </div>
         </div>
-
         <div class="table-wrap">
           <table>
             <thead><tr><th>Item</th><th class="right">Quantity</th><th class="admin-column hidden"><span class="sr-only">Actions</span></th></tr></thead>
@@ -80,11 +70,13 @@
         </div>
         <div class="statusbar"><span id="syncStatus">Connecting…</span><span id="itemCount">0 items</span></div>
       </section>
-
       <footer class="site-footer">Design: O. Deubelbeiss 12.11.2026</footer>
     </section>
   </main>
 
+  <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
+    <span id="themeIcon" aria-hidden="true">☀</span>
+  </button>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script type="module" src="app.js"></script>
 </body>
