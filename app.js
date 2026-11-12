@@ -281,18 +281,21 @@ function itemHTML(i) {
 
 function updateSummary() {
   const counts = { all: state.items.length, in: 0, low: 0, out: 0 };
-  let units = 0, value = 0;
+  let units = 0, value = 0, profit = 0;
   state.items.forEach(i => {
     const q = qtyOf(i);
     counts[stockOf(q)]++;
     units += q;
-    value += q * num(i.price);
+    const subtotal = q * num(i.price);
+    value += subtotal;
+    profit += subtotal; // Totaler Gewinn basierend auf dem aktuellen Lagerwert (Verkaufswert)
   });
   $("statProducts").textContent = counts.all;
   $("statUnits").textContent = units;
   $("statLow").textContent = counts.low;
   $("statOut").textContent = counts.out;
   $("statValue").textContent = `${value.toFixed(2)} CHF`;
+  $("statProfit").textContent = `${profit.toFixed(2)} CHF`;
   document.querySelectorAll("#filterChips .chip").forEach(chip => {
     chip.querySelector(".chip-count").textContent = counts[chip.dataset.filter];
     const on = chip.dataset.filter === state.filter;
