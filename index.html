@@ -2,16 +2,28 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#080b14">
   <title>Snack-Shack Inventory</title>
+  <script>
+    /* Apply the saved theme before first paint to avoid a flash */
+    (function () {
+      try {
+        var t = localStorage.getItem("snack-shack-theme");
+        if (!t) t = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body class="viewer">
   <div class="ambient ambient-one"></div>
   <div class="ambient ambient-two"></div>
+
   <main class="shell">
-    <dialog id="loginDialog" class="login-dialog panel">
+    <!-- Admin login -->
+    <dialog id="loginDialog" class="dialog">
       <form id="authForm" method="dialog">
         <div class="dialog-head">
           <div><p class="eyebrow">ADMIN ACCESS</p><h2>Sign in to edit</h2></div>
@@ -19,57 +31,144 @@
         </div>
         <p class="muted">Visitors can view quantities. Only the administrator can make changes.</p>
         <label>Username<input id="username" autocomplete="username" required value="korbit"></label>
-        <label>Password<input id="password" type="password" autocomplete="current-password" required placeholder="Password"></label>
+        <label>Password
+          <span class="pw-wrap">
+            <input id="password" type="password" autocomplete="current-password" required placeholder="Password">
+            <button id="togglePw" class="pw-toggle" type="button" aria-label="Show password">Show</button>
+          </span>
+        </label>
         <p id="authError" class="error" role="alert"></p>
-        <button id="loginBtn" class="primary" type="submit">Sign in as admin</button>
+        <button id="loginBtn" class="btn primary" type="submit">Sign in as admin</button>
       </form>
+    </dialog>
+
+    <!-- Add / edit item -->
+    <dialog id="itemDialog" class="dialog">
+      <form id="itemForm">
+        <div class="dialog-head">
+          <div><p id="itemEyebrow" class="eyebrow">NEW ITEM</p><h2 id="itemDialogTitle">Add item</h2></div>
+          <button id="closeItem" class="icon-btn" type="button" aria-label="Close">✕</button>
+        </div>
+        <label>Product name
+          <input id="itemInput" maxlength="80" required placeholder="e.g. Iced Tea Peach" autocomplete="off">
+        </label>
+        <div class="field-row">
+          <label>Price (CHF)
+            <input id="priceInput" type="number" min="0" step="0.05" inputmode="decimal" required placeholder="2.50">
+          </label>
+          <label>Quantity
+            <input id="qtyInput" type="number" min="0" step="1" inputmode="numeric" value="0">
+          </label>
+        </div>
+        <label>Size <span class="optional">optional</span>
+          <input id="sizeInput" maxlength="30" placeholder="e.g. 500 ML" autocomplete="off">
+        </label>
+        <div class="dialog-actions">
+          <button id="cancelItem" class="btn secondary" type="button">Cancel</button>
+          <button id="saveAnotherBtn" class="btn secondary" type="submit" data-again="1">Save &amp; add another</button>
+          <button id="saveItemBtn" class="btn primary" type="submit">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Delete confirmation -->
+    <dialog id="confirmDialog" class="dialog dialog-sm">
+      <div class="dialog-body">
+        <p class="eyebrow danger-text">DELETE ITEM</p>
+        <h2>Are you sure?</h2>
+        <p id="confirmText" class="muted"></p>
+        <div class="dialog-actions">
+          <button id="confirmCancel" class="btn secondary" type="button">Cancel</button>
+          <button id="confirmDelete" class="btn danger" type="button">Delete</button>
+        </div>
+      </div>
     </dialog>
 
     <section id="appView" class="app">
       <header class="topbar">
-        <div class="brand"><span class="brand-mark">S</span><span>Snack-Shack</span></div>
+        <div class="brand">
+          <span class="brand-mark">S</span>
+          <span class="brand-text"><span class="brand-name">Snack-Shack</span><span class="brand-sub">Inventory</span></span>
+        </div>
         <div class="userbox">
+          <span id="syncPill" class="sync-pill" data-state="connecting"><span class="sync-dot"></span><span id="syncStatus">Connecting…</span></span>
           <span id="modeBadge" class="mode-badge">View only</span>
-          <button id="loginOpenBtn" class="secondary small">Admin login</button>
-          <button id="logoutBtn" class="secondary small hidden">Sign out</button>
+          <button id="loginOpenBtn" class="btn secondary small" type="button">Admin login</button>
+          <button id="logoutBtn" class="btn secondary small hidden" type="button">Sign out</button>
         </div>
       </header>
 
       <section class="hero panel">
-        <h1>Live Snack Inventory</h1>
-      </section>
-
-      <section class="payment-strip panel" aria-label="Payment methods">
-        <div class="payment-copy"><span class="payment-label">PAYMENT</span></div>
-        <div class="payment-methods">
-          <span class="payment-chip twint"><span class="payment-icon">T</span>TWINT</span>
-          <span class="payment-or">or</span>
-          <span class="payment-chip cash"><span class="payment-icon">Fr.</span>CHF</span>
+        <div class="hero-copy">
+          <p class="eyebrow">LIVE STOCK</p>
+          <h1>Live Snack Inventory</h1>
+          <p class="muted">What’s in stock right now. Updates in real time.</p>
         </div>
-      </section>
-
-      <section class="panel inventory">
-        <div class="toolbar">
-          <form id="addForm" class="add-form admin-only hidden">
-            <input id="itemInput" maxlength="80" required placeholder="Product name" aria-label="Product name">
-            <input id="priceInput" type="number" min="0" step="0.05" inputmode="decimal" required placeholder="Price (CHF)" aria-label="Price in Swiss francs">
-            <input id="sizeInput" maxlength="30" placeholder="Size (e.g. 500 ML)" aria-label="Product size">
-            <button class="primary" type="submit">+ Add</button>
-          </form>
-          <div class="tools">
-            <input id="searchInput" type="search" placeholder="Search…" aria-label="Search items">
-            <button id="sortBtn" class="secondary" type="button">A–Z</button>
+        <div class="payment" aria-label="Payment methods">
+          <span class="payment-label">PAYMENT</span>
+          <div class="payment-methods">
+            <span class="payment-chip twint"><span class="payment-icon">T</span>TWINT</span>
+            <span class="payment-or">or</span>
+            <span class="payment-chip cash"><span class="payment-icon">Fr.</span>CHF</span>
           </div>
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>Item</th><th class="right">Quantity</th><th class="admin-column hidden"><span class="sr-only">Actions</span></th></tr></thead>
-            <tbody id="itemRows"></tbody>
-          </table>
-          <div id="emptyState" class="empty"><div class="empty-icon">＋</div><strong>No items yet</strong><span>Add your first item above.</span></div>
-        </div>
-        <div class="statusbar"><span id="syncStatus">Connecting…</span><span id="itemCount">0 items</span></div>
       </section>
+
+      <section class="stats" aria-label="Inventory summary">
+        <div class="stat"><span class="stat-label">Products</span><strong id="statProducts">0</strong></div>
+        <div class="stat"><span class="stat-label">Units in stock</span><strong id="statUnits">0</strong></div>
+        <div class="stat warn"><span class="stat-label">Low stock</span><strong id="statLow">0</strong></div>
+        <div class="stat danger"><span class="stat-label">Sold out</span><strong id="statOut">0</strong></div>
+        <div class="stat admin-only hidden"><span class="stat-label">Stock value</span><strong id="statValue">0.00 CHF</strong></div>
+      </section>
+
+      <section class="toolbar panel" aria-label="Search and filters">
+        <div class="toolbar-row">
+          <label class="search">
+            <svg class="search-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+            <input id="searchInput" type="search" placeholder="Search items, sizes, prices…" aria-label="Search items" autocomplete="off">
+            <kbd aria-hidden="true">/</kbd>
+          </label>
+          <div class="toolbar-actions">
+            <select id="sortKey" aria-label="Sort by">
+              <option value="name">Name</option>
+              <option value="price">Price</option>
+              <option value="quantity">Quantity</option>
+            </select>
+            <button id="sortBtn" class="btn secondary" type="button" title="Reverse sort order">A–Z</button>
+            <div class="seg" role="group" aria-label="Layout">
+              <button id="viewGrid" type="button" aria-pressed="true" aria-label="Card view" title="Card view">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+              </button>
+              <button id="viewList" type="button" aria-pressed="false" aria-label="List view" title="List view">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="toolbar-row">
+          <div id="filterChips" class="chips" role="group" aria-label="Filter by stock level">
+            <button class="chip active" type="button" data-filter="all">All <span class="chip-count">0</span></button>
+            <button class="chip" type="button" data-filter="in">In stock <span class="chip-count">0</span></button>
+            <button class="chip" type="button" data-filter="low">Low <span class="chip-count">0</span></button>
+            <button class="chip" type="button" data-filter="out">Sold out <span class="chip-count">0</span></button>
+          </div>
+          <div class="admin-actions admin-only hidden">
+            <button id="exportBtn" class="btn secondary" type="button">Export CSV</button>
+            <button id="addOpenBtn" class="btn primary" type="button">+ Add item</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="itemList" class="items grid" aria-label="Inventory items"></section>
+
+      <div id="emptyState" class="empty hidden">
+        <div class="empty-icon">＋</div>
+        <strong id="emptyTitle">No items yet</strong>
+        <span id="emptyText">Add your first item to get started.</span>
+      </div>
+
+      <div class="statusbar"><span id="itemCount">0 items</span><span id="resultCount"></span></div>
       <footer class="site-footer">Design: O. Deubelbeiss 12.11.2026</footer>
     </section>
   </main>
