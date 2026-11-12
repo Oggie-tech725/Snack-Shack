@@ -100,17 +100,26 @@
 
       <section class="hero panel">
         <div class="hero-copy">
-         
           <h1>Live Snack Inventory</h1>
           <p class="muted">What’s in stock right now.</p>
         </div>
         <div class="payment" aria-label="Payment methods">
           <span class="payment-label">PAYMENT</span>
           <div class="payment-methods">
-            <span class="payment-chip twint"><span class="payment-icon"><img src="Twint.png" alt=""width="25" height="25"></span>Twint</span>
+            <span class="payment-chip twint"><span class="payment-icon"><img src="Twint.png" alt="" width="25" height="25"></span>Twint</span>
             <span class="payment-or">or</span>
             <span class="payment-chip cash"><span class="payment-icon">CHF</span>Cash</span>
           </div>
+        </div>
+      </section>
+
+      <!-- Contact & Opening Hours Bubble -->
+      <section class="info-panel panel">
+        <span class="info-label">CONTACT &amp; OPENING HOURS</span>
+        <div class="info-body">
+          <span><strong>Contact:</strong> +41 76 501 68 35</span>
+          <span class="info-sep">•</span>
+          <span><strong>Opening hours:</strong> Every day 12:05–13:00, 10:15–10:30, 14:45–14:55</span>
         </div>
       </section>
 
@@ -120,7 +129,13 @@
         <div class="stat warn admin-only hidden"><span class="stat-label">Low stock</span><strong id="statLow">0</strong></div>
         <div class="stat danger admin-only hidden"><span class="stat-label">Sold out</span><strong id="statOut">0</strong></div>
         <div class="stat admin-only hidden"><span class="stat-label">Stock value</span><strong id="statValue">0.00 CHF</strong></div>
-        <div class="stat admin-only hidden"><span class="stat-label">Totaler Gewinn</span><strong id="statProfit">0.00 CHF</strong></div>
+        <div class="stat admin-only hidden">
+          <div class="stat-top">
+            <span class="stat-label">Totaler Gewinn</span>
+            <button id="resetProfitBtn" class="btn secondary small" type="button" title="Reset profit" style="padding: 2px 6px; font-size: 0.7rem; height: auto;">Reset</button>
+          </div>
+          <strong id="statProfit">0.00 CHF</strong>
+        </div>
       </section>
 
       <section class="toolbar panel" aria-label="Search and filters">

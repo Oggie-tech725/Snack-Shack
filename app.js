@@ -9,7 +9,7 @@ const $ = id => document.getElementById(id);
 
 /* ───────── Config & helpers ───────── */
 const LOW_STOCK = 3; // quantity at or below this (and above 0) counts as "low"
-const THEME_KEY = "snack-shack-theme", VIEW_KEY = "snack-shack-view";
+const THEME_KEY = "snack-shack-theme", VIEW_KEY = "snack-shack-view", PROFIT_KEY = "snack-shack-profit";
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
@@ -118,6 +118,17 @@ function subscribe() {
     const next = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     next.forEach(i => {
       const q = qtyOf(i);
+      // Track sold products for profit accumulation
+      if (state.prevQty.has(i.id)) {
+        const oldQ = state.prevQty.get(i.id);
+        if (q < oldQ) {
+          const soldCount = oldQ - q;
+          const itemPrice = num(i.price);
+          let currentProfit = num(store.get(PROFIT_KEY));
+          currentProfit += soldCount * itemPrice;
+          store.set(PROFIT_KEY, currentProfit);
+        }
+      }
       if (state.prevQty.has(i.id) && state.prevQty.get(i.id) !== q) state.flash.add(i.id);
       state.prevQty.set(i.id, q);
     });
@@ -228,7 +239,7 @@ $("confirmDelete").addEventListener("click", async () => {
 /* Export */
 function csvCell(v) {
   let s = String(v ?? "");
-  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // avoid spreadsheet formula injection
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
   return `"${s.replace(/"/g, '""')}"`;
 }
 $("exportBtn").addEventListener("click", () => {
@@ -281,15 +292,14 @@ function itemHTML(i) {
 
 function updateSummary() {
   const counts = { all: state.items.length, in: 0, low: 0, out: 0 };
-  let units = 0, value = 0, profit = 0;
+  let units = 0, value = 0;
   state.items.forEach(i => {
     const q = qtyOf(i);
     counts[stockOf(q)]++;
     units += q;
-    const subtotal = q * num(i.price);
-    value += subtotal;
-    profit += subtotal; // Totaler Gewinn basierend auf dem aktuellen Lagerwert (Verkaufswert)
+    value += q * num(i.price);
   });
+  const profit = num(store.get(PROFIT_KEY));
   $("statProducts").textContent = counts.all;
   $("statUnits").textContent = units;
   $("statLow").textContent = counts.low;
@@ -303,6 +313,13 @@ function updateSummary() {
     chip.setAttribute("aria-pressed", on);
   });
 }
+
+$("resetProfitBtn").addEventListener("click", () => {
+  if (!state.isAdmin) return;
+  store.set(PROFIT_KEY, 0);
+  updateSummary();
+  toast("Totaler Gewinn reset");
+});
 
 function render() {
   const list = $("itemList");

@@ -233,3 +233,11 @@ body:not(.viewer) .items.list .item{grid-template-columns:minmax(0,1fr) auto aut
   .dialog-actions .btn{flex:1}
   .payment-chip{padding:10px 8px}
 }
+
+
+/* ───────── Info Panel Bubble ───────── */
+.info-panel{padding:20px 24px;margin-bottom:14px;display:grid;gap:8px;background:linear-gradient(110deg,rgba(91,140,255,.15),var(--panel) 60%,rgba(124,60,255,.12))}
+.info-label{color:var(--accent);font-size:.72rem;font-weight:850;letter-spacing:.2em}
+.info-body{display:flex;align-items:center;flex-wrap:wrap;gap:12px;font-size:.95rem;color:var(--text)}
+.info-sep{color:var(--muted)}
+.stat-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
