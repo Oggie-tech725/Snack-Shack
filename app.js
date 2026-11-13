@@ -1,7 +1,7 @@
 import { firebaseConfig } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, serverTimestamp, runTransaction, setDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 import { ADMIN_USERNAME, ADMIN_EMAIL } from "./admin-config.js";
 
 const firebaseApp = initializeApp(firebaseConfig), auth = getAuth(firebaseApp), db = getFirestore(firebaseApp);
@@ -9,7 +9,7 @@ const $ = id => document.getElementById(id);
 
 /* ───────── Config & helpers ───────── */
 const LOW_STOCK = 3; // quantity at or below this (and above 0) counts as "low"
-const THEME_KEY = "snack-shack-theme", VIEW_KEY = "snack-shack-view", PROFIT_KEY = "snack-shack-profit";
+const THEME_KEY = "snack-shack-theme", VIEW_KEY = "snack-shack-view";
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
@@ -21,6 +21,7 @@ const qtyOf = i => Math.max(0, Math.floor(num(i.quantity)));
 const stockOf = q => q <= 0 ? "out" : q <= LOW_STOCK ? "low" : "in";
 const STOCK_LABEL = { in: "In stock", low: "Low stock", out: "Sold out" };
 function priceText(value) { const n = Number(value); return Number.isFinite(n) ? `${n.toFixed(2)} CHF` : ""; }
+const marginOf = i => num(i.price) - num(i.buyPrice); // profit per unit (old items without buyPrice count as 0 cost)
 const cmpName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""), undefined, { sensitivity: "base" });
 
 const ICON_EDIT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
@@ -31,7 +32,7 @@ const state = {
   ascending: true, sortKey: "name", filter: "all",
   view: store.get(VIEW_KEY) === "list" ? "list" : "grid",
   loaded: false, editingId: null, pendingDelete: null,
-  flash: new Set(), prevQty: new Map()
+  flash: new Set(), prevQty: new Map(), profit: 0, unsubProfit: null
 };
 let toastTimer;
 
@@ -107,10 +108,28 @@ onAuthStateChanged(auth, user => {
   setAdminUI(Boolean(user));
   if (state.unsubscribe) state.unsubscribe();
   subscribe();
+  subscribeProfit();
 });
 
 /* ───────── Data ───────── */
 function itemsCollection() { return collection(db, "inventory"); }
+
+const statsRef = () => doc(db, "meta", "stats");
+const round2 = n => Math.round(n * 100) / 100;
+
+/* Total profit lives in Firestore (meta/stats, admin-only) so it is the same on every device */
+function subscribeProfit() {
+  if (state.unsubProfit) { state.unsubProfit(); state.unsubProfit = null; }
+  state.profit = 0;
+  if (!state.isAdmin) return;
+  state.unsubProfit = onSnapshot(statsRef(), snap => {
+    state.profit = snap.exists() ? num(snap.data().profit) : 0;
+    updateSummary();
+  }, err => {
+    console.error(err);
+    toast("Could not load profit");
+  });
+}
 
 function subscribe() {
   setSync("syncing", "Syncing…");
@@ -118,17 +137,6 @@ function subscribe() {
     const next = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     next.forEach(i => {
       const q = qtyOf(i);
-      // Track sold products for profit accumulation
-      if (state.prevQty.has(i.id)) {
-        const oldQ = state.prevQty.get(i.id);
-        if (q < oldQ) {
-          const soldCount = oldQ - q;
-          const itemPrice = num(i.price);
-          let currentProfit = num(store.get(PROFIT_KEY));
-          currentProfit += soldCount * itemPrice;
-          store.set(PROFIT_KEY, currentProfit);
-        }
-      }
       if (state.prevQty.has(i.id) && state.prevQty.get(i.id) !== q) state.flash.add(i.id);
       state.prevQty.set(i.id, q);
     });
@@ -150,9 +158,18 @@ async function changeQuantity(id, delta) {
   const ref = doc(db, "inventory", id);
   try {
     await runTransaction(db, async tx => {
-      const s = await tx.get(ref);
+      // all reads first, then writes
+      const [s, ps] = await Promise.all([tx.get(ref), tx.get(statsRef())]);
       if (!s.exists()) return;
-      tx.update(ref, { quantity: Math.max(0, Number(s.data().quantity || 0) + delta), updatedAt: serverTimestamp() });
+      const d = s.data();
+      const cur = Math.max(0, Math.floor(num(d.quantity)));
+      const next = Math.max(0, cur + delta);
+      tx.update(ref, { quantity: next, updatedAt: serverTimestamp() });
+      const sold = cur - next;
+      if (sold > 0) {
+        const profit = round2(num(ps.exists() ? ps.data().profit : 0) + sold * (num(d.price) - num(d.buyPrice)));
+        tx.set(statsRef(), { profit, updatedAt: serverTimestamp() }, { merge: true });
+      }
     });
   } catch (err) {
     console.error(err);
@@ -168,12 +185,23 @@ function openItemDialog(item) {
   $("itemDialogTitle").textContent = item ? "Edit item" : "Add item";
   $("itemInput").value = item ? (item.name || "") : "";
   $("priceInput").value = item && item.price != null ? item.price : "";
+  $("buyPriceInput").value = item && item.buyPrice != null ? item.buyPrice : "";
+  updateMarginHint();
   $("sizeInput").value = item ? (item.size || "") : "";
   $("qtyInput").value = item ? qtyOf(item) : 0;
   $("saveAnotherBtn").classList.toggle("hidden", Boolean(item));
   $("itemDialog").showModal();
   $("itemInput").focus();
 }
+function updateMarginHint() {
+  const el = $("marginHint"), b = $("buyPriceInput").value, s = $("priceInput").value;
+  if (b === "" || s === "") { el.textContent = ""; el.className = "muted margin-hint"; return; }
+  const m = Number(s) - Number(b);
+  el.textContent = `Profit per unit: ${m >= 0 ? "+" : ""}${m.toFixed(2)} CHF`;
+  el.className = `muted margin-hint ${m >= 0 ? "pos" : "neg"}`;
+}
+$("buyPriceInput").addEventListener("input", updateMarginHint);
+$("priceInput").addEventListener("input", updateMarginHint);
 $("addOpenBtn").addEventListener("click", () => openItemDialog(null));
 $("closeItem").addEventListener("click", () => $("itemDialog").close());
 $("cancelItem").addEventListener("click", () => $("itemDialog").close());
@@ -182,9 +210,9 @@ $("itemForm").addEventListener("submit", async e => {
   e.preventDefault();
   if (!state.isAdmin) return;
   const again = e.submitter && e.submitter.dataset.again === "1";
-  const name = $("itemInput").value.trim(), price = Number($("priceInput").value), size = $("sizeInput").value.trim();
+  const name = $("itemInput").value.trim(), price = Number($("priceInput").value), buyPrice = Number($("buyPriceInput").value), size = $("sizeInput").value.trim();
   const quantity = Math.max(0, Math.floor(Number($("qtyInput").value) || 0));
-  if (!name || !Number.isFinite(price) || price < 0) return;
+  if (!name || !Number.isFinite(price) || price < 0 || !Number.isFinite(buyPrice) || buyPrice < 0) return;
 
   const buttons = [...$("itemForm").querySelectorAll("button[type=submit]")];
   buttons.forEach(b => b.disabled = true);
@@ -192,15 +220,15 @@ $("itemForm").addEventListener("submit", async e => {
   try {
     if (editing) {
       const prev = state.items.find(x => x.id === editing);
-      const data = { name, price, size, updatedAt: serverTimestamp() };
+      const data = { name, price, buyPrice, size, updatedAt: serverTimestamp() };
       if (!prev || qtyOf(prev) !== quantity) data.quantity = quantity;
       await updateDoc(doc(db, "inventory", editing), data);
       toast("Item updated");
       $("itemDialog").close();
     } else {
-      await addDoc(itemsCollection(), { name, price, size, quantity, createdAt: serverTimestamp() });
+      await addDoc(itemsCollection(), { name, price, buyPrice, size, quantity, createdAt: serverTimestamp() });
       toast(`Added “${name}”`);
-      if (again) { $("itemForm").reset(); $("itemInput").focus(); }
+      if (again) { $("itemForm").reset(); updateMarginHint(); $("itemInput").focus(); }
       else $("itemDialog").close();
     }
   } catch (err) {
@@ -244,8 +272,8 @@ function csvCell(v) {
 }
 $("exportBtn").addEventListener("click", () => {
   if (!state.isAdmin) return;
-  const rows = [["Name", "Size", "Price (CHF)", "Quantity"]];
-  state.items.slice().sort(cmpName).forEach(i => rows.push([i.name, i.size, Number.isFinite(Number(i.price)) ? Number(i.price).toFixed(2) : "", qtyOf(i)]));
+  const rows = [["Name", "Size", "Buy price (CHF)", "Sell price (CHF)", "Quantity"]];
+  state.items.slice().sort(cmpName).forEach(i => rows.push([i.name, i.size, num(i.buyPrice).toFixed(2), Number.isFinite(Number(i.price)) ? Number(i.price).toFixed(2) : "", qtyOf(i)]));
   const csv = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
   const d = new Date(), pad = n => String(n).padStart(2, "0");
   const a = document.createElement("a");
@@ -282,8 +310,10 @@ function itemHTML(i) {
   const actions = state.isAdmin
     ? `<div class="item-actions"><button class="icon-action" type="button" data-action="edit" data-id="${i.id}" aria-label="Edit ${name}" title="Edit">${ICON_EDIT}</button><button class="icon-action danger" type="button" data-action="delete" data-id="${i.id}" aria-label="Delete ${name}" title="Delete">${ICON_TRASH}</button></div>`
     : "";
+  const m = marginOf(i);
+  const adminMeta = state.isAdmin ? `<span class="item-buy">Buy ${num(i.buyPrice).toFixed(2)}</span><span class="item-margin${m < 0 ? " neg" : ""}">${m >= 0 ? "+" : ""}${m.toFixed(2)}</span>` : "";
   return `<article class="item" data-id="${i.id}" data-status="${s}">
-    <div class="item-info"><h3 class="item-name">${name}</h3><div class="item-meta">${price ? `<span class="item-price">${esc(price)}</span>` : ""}${i.size ? `<span class="item-size">${esc(i.size)}</span>` : ""}</div></div>
+    <div class="item-info"><h3 class="item-name">${name}</h3><div class="item-meta">${price ? `<span class="item-price">${esc(price)}</span>` : ""}${i.size ? `<span class="item-size">${esc(i.size)}</span>` : ""}</div>${state.isAdmin ? `<div class="item-meta">${adminMeta}</div>` : ""}</div>
     ${actions}
     <span class="badge ${s}">${STOCK_LABEL[s]}</span>
     ${counter}
@@ -299,7 +329,7 @@ function updateSummary() {
     units += q;
     value += q * num(i.price);
   });
-  const profit = num(store.get(PROFIT_KEY));
+  const profit = state.profit;
   $("statProducts").textContent = counts.all;
   $("statUnits").textContent = units;
   $("statLow").textContent = counts.low;
@@ -314,11 +344,16 @@ function updateSummary() {
   });
 }
 
-$("resetProfitBtn").addEventListener("click", () => {
+$("resetProfitBtn").addEventListener("click", async () => {
   if (!state.isAdmin) return;
-  store.set(PROFIT_KEY, 0);
-  updateSummary();
-  toast("Totaler Gewinn reset");
+  if (!confirm("Reset Totaler Gewinn to 0.00 CHF?")) return;
+  try {
+    await setDoc(statsRef(), { profit: 0, updatedAt: serverTimestamp() });
+    toast("Totaler Gewinn reset");
+  } catch (err) {
+    console.error(err);
+    toast("Could not reset profit");
+  }
 });
 
 function render() {
@@ -413,7 +448,7 @@ function applyTheme(theme) {
   $("themeIcon").textContent = light ? "☾" : "☀";
   $("themeToggle").setAttribute("aria-label", light ? "Switch to dark mode" : "Switch to light mode");
   $("themeToggle").title = light ? "Switch to dark mode" : "Switch to light mode";
-  document.querySelector('meta[name="theme-color"]').content = light ? "#f5f7ff" : "#080b14";
+  document.querySelector('meta[name="theme-color"]').content = light ? "#fff8f1" : "#0d0905";
 }
 applyTheme(initialTheme);
 $("themeToggle").addEventListener("click", () => {
