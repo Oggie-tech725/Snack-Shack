@@ -248,3 +248,304 @@ body:not(.viewer) .items.list .item{grid-template-columns:minmax(0,1fr) auto aut
 .item-buy{color:var(--muted);font-size:.78rem;font-weight:600;font-variant-numeric:tabular-nums}
 .item-margin{font-size:.78rem;font-weight:700;color:var(--good);font-variant-numeric:tabular-nums}
 .item-margin.neg{color:var(--danger)}
+
+
+/* ───────── Mobile sizing fixes ─────────
+   Keep every layout constrained to the viewport and let grid/flex children
+   shrink instead of forcing the page wider than the device. */
+html,
+body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+  overflow-x: clip;
+}
+
+.shell {
+  width: calc(100% - 32px);
+  max-width: 1100px;
+  min-width: 0;
+}
+
+.app,
+.topbar,
+.userbox,
+.hero,
+.info-panel,
+.info-body,
+.stats,
+.stat,
+.toolbar,
+.toolbar-row,
+.toolbar-actions,
+.admin-actions,
+.items,
+.item,
+.item-info {
+  min-width: 0;
+}
+
+.item-name,
+.item-meta,
+.info-body > span {
+  overflow-wrap: anywhere;
+}
+
+.items.grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
+}
+
+@media (max-width: 760px) {
+  .shell {
+    width: calc(100% - 24px);
+    padding: 12px 0 calc(88px + env(safe-area-inset-bottom));
+  }
+
+  .topbar {
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .userbox {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .hero {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 20px 16px;
+    gap: 16px;
+  }
+
+  .hero-copy,
+  .payment {
+    min-width: 0;
+  }
+
+  .payment {
+    justify-items: stretch;
+  }
+
+  .payment-methods {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .payment-chip {
+    min-width: 0;
+    flex: 1 1 0;
+    justify-content: center;
+  }
+
+  .info-panel {
+    padding: 16px;
+  }
+
+  .info-body {
+    align-items: flex-start;
+    gap: 7px 10px;
+    font-size: .9rem;
+  }
+
+  /* A sticky multi-row toolbar can consume most of a phone's screen. */
+  .toolbar {
+    position: static;
+    padding: 10px;
+  }
+
+  .toolbar-row {
+    align-items: stretch;
+  }
+
+  .toolbar-row:first-child {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .search {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .toolbar-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    width: 100%;
+    gap: 7px;
+  }
+
+  .toolbar-actions select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .toolbar-actions > .btn,
+  .toolbar-actions .seg {
+    min-width: 0;
+  }
+
+  .seg button {
+    min-width: 38px;
+    min-height: 38px;
+    padding: 7px;
+  }
+
+  .toolbar-row:last-child {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chips {
+    width: 100%;
+    max-width: 100%;
+    overscroll-behavior-x: contain;
+  }
+
+  .admin-actions {
+    width: 100%;
+    display: flex;
+  }
+
+  .admin-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .items.grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  }
+
+  .viewer .items.list .item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "info info"
+      "badge counter";
+    align-items: center;
+    gap: 10px 12px;
+  }
+
+  body:not(.viewer) .items.list .item {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "info info"
+      "badge badge"
+      "counter actions";
+    align-items: center;
+    gap: 10px 12px;
+  }
+
+  .items.list .item .counter {
+    justify-self: start;
+  }
+
+  .items.list .item .item-actions {
+    justify-self: end;
+  }
+
+  .dialog {
+    width: calc(100% - 20px);
+    max-width: 460px;
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .dialog form,
+  .dialog-body {
+    padding: 20px;
+  }
+
+  .theme-toggle {
+    width: 44px;
+    height: 44px;
+    right: calc(12px + env(safe-area-inset-right));
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 480px) {
+  .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .stat {
+    padding: 12px;
+    gap: 5px;
+  }
+
+  .stat-label {
+    font-size: .66rem;
+    letter-spacing: .04em;
+  }
+
+  .stat strong {
+    font-size: clamp(1.05rem, 5.2vw, 1.4rem);
+    overflow-wrap: anywhere;
+  }
+
+  .items.grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .field-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .dialog-actions {
+    gap: 7px;
+  }
+
+  .dialog-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  input,
+  select {
+    font-size: 16px;
+  }
+
+  .statusbar {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 360px) {
+  .shell {
+    width: calc(100% - 20px);
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .sync-pill,
+  .mode-badge {
+    padding: 6px 8px;
+    font-size: .74rem;
+  }
+
+  .toolbar-actions {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 5px;
+  }
+
+  .toolbar-actions .btn {
+    padding: 9px 10px;
+  }
+
+  .items.grid .item {
+    padding: 14px 10px 14px 16px;
+  }
+
+  .counter {
+    gap: 4px;
+  }
+
+  .step {
+    width: 36px;
+    height: 36px;
+  }
+}
