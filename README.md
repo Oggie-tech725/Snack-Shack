@@ -25,3 +25,7 @@ Visitors can view the shared inventory without signing in. Only the Firebase adm
 ## Important
 
 The administrator password `12345678` is weak and becomes especially risky if it is shared or reused. Use it only as an initial password, then replace it in Firebase Authentication with a long unique password.
+
+## Totaler Gewinn (profit)
+
+The total profit is stored in Firestore at `meta/stats` (admin-only). Every time the admin presses **−** on an item, `sell price − buy price` is added to it. **You must publish the current `firestore.rules`** (Firestore Database > Rules > Publish), otherwise the profit cannot be read or saved and the page shows "—" in the profit tile.

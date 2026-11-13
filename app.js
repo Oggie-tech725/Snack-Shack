@@ -1,7 +1,7 @@
 import { firebaseConfig } from "./firebase-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, serverTimestamp, runTransaction, setDoc } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, serverTimestamp, runTransaction, setDoc, increment } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 import { ADMIN_USERNAME, ADMIN_EMAIL } from "./admin-config.js";
 
 const firebaseApp = initializeApp(firebaseConfig), auth = getAuth(firebaseApp), db = getFirestore(firebaseApp);
@@ -32,7 +32,7 @@ const state = {
   ascending: true, sortKey: "name", filter: "all",
   view: store.get(VIEW_KEY) === "list" ? "list" : "grid",
   loaded: false, editingId: null, pendingDelete: null,
-  flash: new Set(), prevQty: new Map(), profit: 0, unsubProfit: null
+  flash: new Set(), prevQty: new Map(), profit: 0, profitError: null, unsubProfit: null
 };
 let toastTimer;
 
@@ -121,13 +121,17 @@ const round2 = n => Math.round(n * 100) / 100;
 function subscribeProfit() {
   if (state.unsubProfit) { state.unsubProfit(); state.unsubProfit = null; }
   state.profit = 0;
+  state.profitError = null;
   if (!state.isAdmin) return;
   state.unsubProfit = onSnapshot(statsRef(), snap => {
+    state.profitError = null;
     state.profit = snap.exists() ? num(snap.data().profit) : 0;
     updateSummary();
   }, err => {
     console.error(err);
-    toast("Could not load profit");
+    state.profitError = err.code || "error";
+    updateSummary();
+    toast(`Profit can't be read (${state.profitError}). Publish firestore.rules in Firebase.`);
   });
 }
 
@@ -153,28 +157,38 @@ function subscribe() {
   });
 }
 
+/* Add profit with an atomic increment (no read needed, safe across devices) */
+async function recordProfit(amount) {
+  if (!amount) return;
+  try {
+    await setDoc(statsRef(), { profit: increment(round2(amount)), updatedAt: serverTimestamp() }, { merge: true });
+  } catch (err) {
+    console.error(err);
+    toast(`Quantity saved, but profit was NOT saved (${err.code || "error"}). Publish firestore.rules in Firebase.`);
+  }
+}
+
 async function changeQuantity(id, delta) {
   if (!state.isAdmin) return;
   const ref = doc(db, "inventory", id);
+  let sold = 0, margin = 0;
   try {
     await runTransaction(db, async tx => {
-      // all reads first, then writes
-      const [s, ps] = await Promise.all([tx.get(ref), tx.get(statsRef())]);
+      sold = 0;
+      const s = await tx.get(ref);
       if (!s.exists()) return;
       const d = s.data();
-      const cur = Math.max(0, Math.floor(num(d.quantity)));
-      const next = Math.max(0, cur + delta);
+      const cur = qtyOf(d), next = Math.max(0, cur + delta);
+      sold = cur - next;
+      margin = num(d.price) - num(d.buyPrice);
       tx.update(ref, { quantity: next, updatedAt: serverTimestamp() });
-      const sold = cur - next;
-      if (sold > 0) {
-        const profit = round2(num(ps.exists() ? ps.data().profit : 0) + sold * (num(d.price) - num(d.buyPrice)));
-        tx.set(statsRef(), { profit, updatedAt: serverTimestamp() }, { merge: true });
-      }
     });
   } catch (err) {
     console.error(err);
-    toast("Could not update quantity");
+    toast(`Could not update quantity${err && err.code ? ` (${err.code})` : ""}`);
+    return;
   }
+  if (sold > 0) await recordProfit(sold * margin);
 }
 
 /* Add / edit */
@@ -226,14 +240,16 @@ $("itemForm").addEventListener("submit", async e => {
       toast("Item updated");
       $("itemDialog").close();
     } else {
-      await addDoc(itemsCollection(), { name, price, buyPrice, size, quantity, createdAt: serverTimestamp() });
+      // Create with quantity 0 (what the security rules expect), then set the starting stock
+      const created = await addDoc(itemsCollection(), { name, price, buyPrice, size, quantity: 0, createdAt: serverTimestamp() });
+      if (quantity > 0) await updateDoc(created, { quantity, updatedAt: serverTimestamp() });
       toast(`Added “${name}”`);
       if (again) { $("itemForm").reset(); updateMarginHint(); $("itemInput").focus(); }
       else $("itemDialog").close();
     }
   } catch (err) {
     console.error(err);
-    toast(editing ? "Could not update item" : "Could not add item");
+    toast((editing ? "Could not update item" : "Could not add item") + (err && err.code ? ` (${err.code})` : ""));
   } finally {
     buttons.forEach(b => b.disabled = false);
   }
@@ -335,7 +351,8 @@ function updateSummary() {
   $("statLow").textContent = counts.low;
   $("statOut").textContent = counts.out;
   $("statValue").textContent = `${value.toFixed(2)} CHF`;
-  $("statProfit").textContent = `${profit.toFixed(2)} CHF`;
+  $("statProfit").textContent = state.profitError ? "—" : `${profit.toFixed(2)} CHF`;
+  $("statProfit").title = state.profitError ? `Profit can't be read: ${state.profitError}. Publish firestore.rules in Firebase.` : "";
   document.querySelectorAll("#filterChips .chip").forEach(chip => {
     chip.querySelector(".chip-count").textContent = counts[chip.dataset.filter];
     const on = chip.dataset.filter === state.filter;
@@ -352,7 +369,7 @@ $("resetProfitBtn").addEventListener("click", async () => {
     toast("Totaler Gewinn reset");
   } catch (err) {
     console.error(err);
-    toast("Could not reset profit");
+    toast(`Could not reset profit${err && err.code ? ` (${err.code})` : ""}`);
   }
 });
 
