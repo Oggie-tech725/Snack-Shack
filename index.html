@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#0d0905">
+  <meta name="theme-color" content="#171512">
   <title>Snack-Shack Inventory</title>
   <script>
     /* Apply the saved theme before first paint to avoid a flash */
@@ -18,9 +18,6 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body class="viewer">
-  <div class="ambient ambient-one"></div>
-  <div class="ambient ambient-two"></div>
-
   <main class="shell">
     <!-- Admin login -->
     <dialog id="loginDialog" class="dialog">
@@ -119,7 +116,7 @@
         </div>
       </section>
 
-      <!-- Contact & Opening Hours Bubble -->
+      <!-- Contact & Opening Hours -->
       <section class="info-panel panel">
         <span class="info-label">CONTACT &amp; OPENING HOURS</span>
         <div class="info-body">
@@ -138,7 +135,7 @@
         <div class="stat admin-only hidden">
           <div class="stat-top">
             <span class="stat-label">Totaler Gewinn</span>
-            <button id="resetProfitBtn" class="btn secondary small" type="button" title="Reset profit" style="padding: 2px 6px; font-size: 0.7rem; height: auto;">Reset</button>
+            <button id="resetProfitBtn" class="btn secondary small" type="button" title="Reset profit">Reset</button>
           </div>
           <strong id="statProfit">0.00 CHF</strong>
         </div>
@@ -185,7 +182,7 @@
       <section id="itemList" class="items grid" aria-label="Inventory items"></section>
 
       <div id="emptyState" class="empty hidden">
-        <div class="empty-icon">＋</div>
+        <div class="empty-icon">∅</div>
         <strong id="emptyTitle">No items yet</strong>
         <span id="emptyText">Add your first item to get started.</span>
       </div>
@@ -196,7 +193,7 @@
   </main>
 
   <button id="themeToggle" class="theme-toggle" type="button" aria-label="Switch to light mode" title="Switch to light mode">
-    <span id="themeIcon" aria-hidden="true">☀</span>
+    <span id="themeIcon" aria-hidden="true">Light</span>
   </button>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script type="module" src="app.js"></script>
