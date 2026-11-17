@@ -1,7 +1,8 @@
 import { firebaseConfig } from "./firebase-config.js";
+import { SHOP_CONFIG } from "./shop-config.js";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
 import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, serverTimestamp, runTransaction, setDoc, increment } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
+import { getFirestore, collection, addDoc, deleteDoc, updateDoc, doc, onSnapshot, query, orderBy, where, serverTimestamp, runTransaction, setDoc, increment } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-firestore.js";
 import { ADMIN_USERNAME, ADMIN_EMAIL } from "./admin-config.js";
 
 const firebaseApp = initializeApp(firebaseConfig), auth = getAuth(firebaseApp), db = getFirestore(firebaseApp);
@@ -27,12 +28,106 @@ const cmpName = (a, b) => String(a.name || "").localeCompare(String(b.name || ""
 const ICON_EDIT = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 const ICON_TRASH = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
 
+/* ───────── Opening hours (always evaluated in the shop time zone) ───────── */
+const TZ = SHOP_CONFIG.timeZone || "Europe/Zurich";
+const dateFmt = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+const partsFmt = new Intl.DateTimeFormat("en-GB", {
+  timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23", weekday: "short"
+});
+const weekdayFmt = new Intl.DateTimeFormat("de-CH", { timeZone: TZ, weekday: "short" });
+const shortDateFmt = new Intl.DateTimeFormat("de-CH", { timeZone: TZ, day: "2-digit", month: "2-digit" });
+
+function minutesOf(hhmm) {
+  const [h, m] = String(hhmm || "0:0").split(":").map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+function zurichDateString(d = new Date()) { return dateFmt.format(d); }
+function zurichParts(d = new Date()) {
+  const p = {};
+  for (const part of partsFmt.formatToParts(d)) if (part.type !== "literal") p[part.type] = part.value;
+  return {
+    ...p,
+    date: `${p.year}-${p.month}-${p.day}`,
+    minutes: (Number(p.hour) % 24) * 60 + Number(p.minute)
+  };
+}
+function dateAtNoon(dateStr) {
+  const [y, m, d] = String(dateStr).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12));
+}
+function addDaysToDate(dateStr, days) {
+  const dt = dateAtNoon(dateStr);
+  dt.setUTCDate(dt.getUTCDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+function weekdayLabel(dateStr) { return weekdayFmt.format(dateAtNoon(dateStr)).replace(/\.$/, ""); }
+function formatDateLabel(dateStr) {
+  const today = zurichDateString();
+  if (dateStr === today) return "heute";
+  if (dateStr === addDaysToDate(today, 1)) return "morgen";
+  return `${weekdayLabel(dateStr)}, ${shortDateFmt.format(dateAtNoon(dateStr))}`;
+}
+function pickupLabelFor(dateStr, start, end) {
+  return `${weekdayLabel(dateStr)}, ${shortDateFmt.format(dateAtNoon(dateStr))}, ${start}–${end}`;
+}
+
+const WINDOWS = (SHOP_CONFIG.openingHours || [])
+  .map(w => ({ ...w, startMin: minutesOf(w.start), endMin: minutesOf(w.end) }))
+  .sort((a, b) => a.startMin - b.startMin);
+
+function openState(now = new Date()) {
+  const p = zurichParts(now);
+  for (const w of WINDOWS) {
+    if (p.minutes >= w.startMin && p.minutes < w.endMin) return { open: true, window: w, offset: 0, date: p.date };
+  }
+  for (let offset = 0; offset <= 7; offset++) {
+    const date = addDaysToDate(p.date, offset);
+    for (const w of WINDOWS) {
+      if (offset === 0 && w.startMin <= p.minutes) continue;
+      return { open: false, window: w, offset, date };
+    }
+  }
+  return null;
+}
+
+function updateOpenBadge() {
+  const el = $("openBadge"), label = $("openBadgeText");
+  if (!el || !label) return;
+  const s = openState();
+  let stateName = "closed", text = "Öffnungszeiten";
+  if (s && s.open) {
+    stateName = "open";
+    text = `Jetzt geöffnet · bis ${s.window.end}`;
+  } else if (s) {
+    const when = s.offset === 0 ? "um" : s.offset === 1 ? "morgen um" : `${weekdayLabel(s.date)} um`;
+    text = `Geschlossen · öffnet ${when} ${s.window.start}`;
+  }
+  el.dataset.state = stateName;
+  if (label.textContent !== text) label.textContent = text;
+  const schedule = `Täglich ${WINDOWS.map(w => `${w.start}–${w.end}`).join(", ")}`;
+  if (el.title !== schedule) el.title = schedule;
+}
+
+function slotsForDate(dateStr) {
+  const now = zurichParts();
+  const buffer = Number(SHOP_CONFIG.reservationBufferMinutes) || 0;
+  return WINDOWS.filter(w => dateStr > now.date || (dateStr === now.date && w.endMin > now.minutes + buffer));
+}
+function defaultReservationDate() {
+  const today = zurichDateString();
+  return slotsForDate(today).length ? today : addDaysToDate(today, 1);
+}
+
+/* ───────── State ───────── */
 const state = {
   items: [], isAdmin: false, unsubscribe: null,
   ascending: true, sortKey: "name", filter: "all",
   view: store.get(VIEW_KEY) === "list" ? "list" : "grid",
   loaded: false, editingId: null, pendingDelete: null,
-  flash: new Set(), prevQty: new Map(), profit: 0, profitError: null, unsubProfit: null
+  flash: new Set(), prevQty: new Map(), profit: 0, profitError: null, unsubProfit: null,
+  reservations: [], wishes: [], unsubReservations: null, unsubWishes: null,
+  reserving: false
 };
 let toastTimer;
 
@@ -56,9 +151,11 @@ function setAdminUI(isAdmin) {
   document.querySelectorAll(".admin-only").forEach(e => e.classList.toggle("hidden", !isAdmin));
   $("loginOpenBtn").classList.toggle("hidden", isAdmin);
   $("logoutBtn").classList.toggle("hidden", !isAdmin);
-  $("modeBadge").textContent = isAdmin ? "Admin mode" : "View only";
+  $("modeBadge").textContent = isAdmin ? "Admin mode" : "Guest";
   $("modeBadge").classList.toggle("admin", isAdmin);
   if (!isAdmin) { $("itemDialog").open && $("itemDialog").close(); $("confirmDialog").open && $("confirmDialog").close(); }
+  if (isAdmin) { subscribeReservations(); subscribeWishes(); }
+  else { stopAdminSubscriptions(); }
   render();
 }
 function friendly(error) {
@@ -155,6 +252,52 @@ function subscribe() {
     toast("Could not load inventory");
     render();
   });
+}
+
+/* Admin-only live lists for reservations and wishes */
+function subscribeReservations() {
+  if (!state.isAdmin || state.unsubReservations) return;
+  state.unsubReservations = onSnapshot(
+    query(collection(db, "reservations"), where("status", "==", "pending")),
+    snap => {
+      state.reservations = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderReservations();
+    },
+    err => {
+      console.error(err);
+      state.reservations = [];
+      const list = $("reservationList");
+      if (list) list.innerHTML = `<p class="muted">Reservierungen können nicht geladen werden (${esc(err.code || "error")}). Bitte die neuen Firestore-Regeln veröffentlichen.</p>`;
+      if ($("reservationCount")) $("reservationCount").textContent = "0";
+    }
+  );
+}
+
+function subscribeWishes() {
+  if (!state.isAdmin || state.unsubWishes) return;
+  state.unsubWishes = onSnapshot(
+    query(collection(db, "wishes"), where("status", "==", "open")),
+    snap => {
+      state.wishes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderWishes();
+    },
+    err => {
+      console.error(err);
+      state.wishes = [];
+      const list = $("wishList");
+      if (list) list.innerHTML = `<p class="muted">Wünsche können nicht geladen werden (${esc(err.code || "error")}). Bitte die neuen Firestore-Regeln veröffentlichen.</p>`;
+      if ($("wishCount")) $("wishCount").textContent = "0";
+    }
+  );
+}
+
+function stopAdminSubscriptions() {
+  if (state.unsubReservations) { state.unsubReservations(); state.unsubReservations = null; }
+  if (state.unsubWishes) { state.unsubWishes(); state.unsubWishes = null; }
+  state.reservations = [];
+  state.wishes = [];
+  renderReservations();
+  renderWishes();
 }
 
 /* Add profit with an atomic increment (no read needed, safe across devices) */
@@ -302,6 +445,491 @@ $("exportBtn").addEventListener("click", () => {
   toast("Inventory exported");
 });
 
+/* ───────── Reservations (customer side) ───────── */
+function reservationCode(id) {
+  const clean = String(id || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+  return (clean.slice(-6) || Math.random().toString(36).slice(2, 8).toUpperCase()).padEnd(6, "X");
+}
+
+function refreshReservationItems() {
+  const sel = $("reserveItem");
+  if (!sel) return;
+  const previous = sel.value;
+  const available = state.items.filter(i => qtyOf(i) > 0).sort(cmpName);
+  if (!available.length) {
+    sel.innerHTML = `<option value="">Keine Artikel verfügbar</option>`;
+    if ($("reserveError")) $("reserveError").textContent = "Zurzeit ist kein Artikel verfügbar.";
+  } else {
+    sel.innerHTML = available.map(i => {
+      const size = i.size ? ` · ${esc(i.size)}` : "";
+      return `<option value="${esc(i.id)}">${esc(i.name)}${size} — ${qtyOf(i)} verfügbar</option>`;
+    }).join("");
+    if (previous && available.some(i => i.id === previous)) sel.value = previous;
+    if ($("reserveError") && $("reserveError").textContent === "Zurzeit ist kein Artikel verfügbar.") {
+      $("reserveError").textContent = "";
+    }
+  }
+  updateReserveSubmitState();
+}
+
+function updateReserveHint() {
+  const hint = $("reserveHint");
+  if (!hint) return;
+  const date = $("reserveDate").value;
+  if (!date) { hint.textContent = ""; return; }
+  const slots = slotsForDate(date);
+  hint.textContent = slots.length
+    ? `Abholung ${formatDateLabel(date)} während der Öffnungszeiten: ${slots.map(w => `${w.start}–${w.end}`).join(", ")}.`
+    : "An diesem Tag ist keine Abholung mehr möglich. Bitte wähle einen anderen Tag.";
+}
+
+function updateReserveSubmitState() {
+  const btn = $("reserveSubmit");
+  if (!btn) return;
+  btn.disabled = state.reserving || !$("reserveItem").value || !$("reserveSlot").value;
+}
+
+function refreshReservationSlots(preferred) {
+  const dateEl = $("reserveDate"), slotEl = $("reserveSlot");
+  if (!dateEl || !slotEl) return;
+  const today = zurichDateString();
+  dateEl.min = today;
+  dateEl.max = addDaysToDate(today, Number(SHOP_CONFIG.reservationDaysAhead) || 14);
+  if (!dateEl.value || dateEl.value < today) dateEl.value = defaultReservationDate();
+  const slots = slotsForDate(dateEl.value);
+  const previous = preferred || slotEl.value;
+  if (slots.length) {
+    slotEl.innerHTML = slots.map(w => `<option value="${w.start}|${w.end}">${w.start}–${w.end}</option>`).join("");
+    if (previous && slots.some(w => `${w.start}|${w.end}` === previous)) slotEl.value = previous;
+  } else {
+    slotEl.innerHTML = `<option value="">Keine Abholzeit an diesem Tag</option>`;
+  }
+  updateReserveHint();
+  updateReserveSubmitState();
+}
+
+function openReserveDialog(itemId) {
+  if (!state.loaded) { toast("Artikel werden noch geladen…"); return; }
+  if ($("reserveError")) $("reserveError").textContent = "";
+  refreshReservationItems();
+  if (itemId && [...$("reserveItem").options].some(o => o.value === itemId)) $("reserveItem").value = itemId;
+  $("reserveDate").value = defaultReservationDate();
+  refreshReservationSlots();
+  $("reserveName").value = "";
+  $("reservePhone").value = "";
+  $("reserveTrap").value = "";
+  $("reserveDialog").showModal();
+  setTimeout(() => $("reserveItem").focus(), 40);
+}
+
+async function submitReservation() {
+  if (state.reserving) return;
+  const itemId = $("reserveItem").value;
+  const date = $("reserveDate").value;
+  const slot = $("reserveSlot").value;
+  const customerName = $("reserveName").value.trim().slice(0, 60);
+  const customerPhone = $("reservePhone").value.trim().slice(0, 30);
+  if ($("reserveTrap").value) { $("reserveDialog").close(); toast("Danke!"); return; }
+  if (!itemId || !date || !slot) { $("reserveError").textContent = "Bitte Artikel und Abholzeit wählen."; return; }
+  const dateEl = $("reserveDate");
+  if ((dateEl.min && date < dateEl.min) || (dateEl.max && date > dateEl.max)) {
+    $("reserveError").textContent = "Bitte wähle ein Datum innerhalb der nächsten zwei Wochen.";
+    return;
+  }
+  if (!slotsForDate(date).some(w => `${w.start}|${w.end}` === slot)) {
+    $("reserveError").textContent = "Dieses Zeitfenster ist nicht mehr verfügbar. Bitte wähle ein anderes.";
+    refreshReservationSlots();
+    return;
+  }
+  const item = state.items.find(i => i.id === itemId);
+  if (!item) { $("reserveError").textContent = "Artikel nicht gefunden."; return; }
+  if (qtyOf(item) < 1) {
+    $("reserveError").textContent = "Dieser Artikel ist gerade ausverkauft.";
+    refreshReservationItems();
+    return;
+  }
+  const [pickupStart, pickupEnd] = slot.split("|");
+  const pickupLabel = pickupLabelFor(date, pickupStart, pickupEnd);
+  const resRef = doc(collection(db, "reservations"));
+  const code = reservationCode(resRef.id);
+  const btn = $("reserveSubmit");
+  const oldText = btn.textContent;
+  state.reserving = true;
+  btn.textContent = "Wird reserviert…";
+  updateReserveSubmitState();
+  $("reserveError").textContent = "";
+  try {
+    await runTransaction(db, async tx => {
+      const itemRef = doc(db, "inventory", itemId);
+      const snap = await tx.get(itemRef);
+      if (!snap.exists()) throw new Error("item-missing");
+      const current = qtyOf(snap.data());
+      if (current < 1) throw new Error("sold-out");
+      tx.update(itemRef, {
+        quantity: current - 1,
+        updatedAt: serverTimestamp(),
+        lastReservationId: resRef.id
+      });
+      tx.set(resRef, {
+        itemId,
+        itemName: String(item.name || "").slice(0, 80),
+        quantity: 1,
+        stockAfter: current - 1,
+        pickupDate: date,
+        pickupStart,
+        pickupEnd,
+        pickupLabel: pickupLabel.slice(0, 80),
+        customerName,
+        customerPhone,
+        code,
+        status: "pending",
+        smsStatus: "pending",
+        source: "public",
+        createdAt: serverTimestamp()
+      });
+    });
+    const reservation = {
+      id: resRef.id, itemId, itemName: item.name, quantity: 1,
+      pickupDate: date, pickupStart, pickupEnd, pickupLabel,
+      customerName, customerPhone, code
+    };
+    $("reserveDialog").close();
+    showReservationSuccess(reservation);
+  } catch (err) {
+    console.error(err);
+    const message = err && err.message;
+    if (message === "sold-out") $("reserveError").textContent = "Dieser Artikel wurde gerade ausverkauft. Bitte wähle einen anderen.";
+    else if (message === "item-missing") $("reserveError").textContent = "Dieser Artikel existiert nicht mehr.";
+    else if (err && err.code === "permission-denied") $("reserveError").textContent = "Reservierung nicht erlaubt. Bitte die neuen Firestore-Regeln veröffentlichen.";
+    else $("reserveError").textContent = `Reservierung fehlgeschlagen${err && err.code ? ` (${err.code})` : ""}. Bitte erneut versuchen.`;
+    refreshReservationItems();
+  } finally {
+    state.reserving = false;
+    btn.textContent = oldText;
+    updateReserveSubmitState();
+  }
+}
+
+function reservationSmsText(res) {
+  let text = `Snack-Shack Reservierung ${res.code}: 1x ${res.itemName}, Abholung ${res.pickupLabel}.`;
+  if (res.customerName) text += ` Name: ${res.customerName}.`;
+  if (res.customerPhone) text += ` Tel: ${res.customerPhone}.`;
+  return text;
+}
+function smsHref(text) {
+  const to = String(SHOP_CONFIG.smsTo || "").replace(/[^\d+]/g, "");
+  return `sms:${to}?body=${encodeURIComponent(text)}`;
+}
+
+function showSmsFallback(res, reason) {
+  const box = $("smsBox");
+  if (!box) return;
+  const text = reservationSmsText(res);
+  box.className = "sms-box warn";
+  box.innerHTML = `<p class="muted">${esc(reason)}</p>
+    <p class="muted">Bitte sende die SMS an ${esc(SHOP_CONFIG.smsToDisplay || SHOP_CONFIG.smsTo)} – der Text ist vorbereitet:</p>
+    <div class="sms-actions">
+      <a class="btn primary" href="${esc(smsHref(text))}">SMS senden</a>
+      <button id="copySmsBtn" class="btn secondary" type="button">Text kopieren</button>
+    </div>
+    <p class="sms-preview">${esc(text)}</p>`;
+  const copyBtn = $("copySmsBtn");
+  if (copyBtn) copyBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("SMS-Text kopiert");
+    } catch {
+      window.prompt("SMS-Text kopieren:", text);
+    }
+  });
+}
+
+async function notifyReservation(res) {
+  const box = $("smsBox");
+  if (!box) return;
+  if (!SHOP_CONFIG.smsEndpoint) {
+    showSmsFallback(res, "Der automatische SMS-Versand ist nicht eingerichtet.");
+    return;
+  }
+  box.className = "sms-box";
+  box.innerHTML = `<p class="muted">SMS wird an den Laden gesendet…</p>`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  try {
+    const response = await fetch(SHOP_CONFIG.smsEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reservationId: res.id }),
+      signal: controller.signal
+    });
+    const data = await response.json().catch(() => ({}));
+    if ((response.ok && data.ok) || data.reason === "already_sent") {
+      box.className = "sms-box ok";
+      box.innerHTML = `<p><strong>SMS an den Laden gesendet.</strong></p>
+        <p class="muted">Der Laden sieht deine Reservierung und den Abholzeitpunkt.</p>`;
+      return;
+    }
+    if (data.reason === "in_progress") {
+      box.className = "sms-box";
+      box.innerHTML = `<p class="muted">Die SMS wird bereits gesendet. Bitte einen Moment warten.</p>`;
+      return;
+    }
+    if (data.reason === "not_pending") {
+      box.className = "sms-box";
+      box.innerHTML = `<p class="muted">Diese Reservierung ist nicht mehr offen. Bitte wende dich direkt an den Laden.</p>`;
+      return;
+    }
+    showSmsFallback(res, data.reason === "not_configured"
+      ? "Der automatische SMS-Versand ist noch nicht eingerichtet."
+      : "Die SMS konnte nicht automatisch gesendet werden.");
+  } catch (err) {
+    if (err.name !== "AbortError") console.error(err);
+    showSmsFallback(res, "Die SMS konnte nicht automatisch gesendet werden.");
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function showReservationSuccess(res) {
+  $("reserveSuccessTitle").textContent = "Reserviert!";
+  $("reserveSuccessSummary").innerHTML = `<strong>1× ${esc(res.itemName)}</strong>
+    <span>Abholung: ${esc(res.pickupLabel)}</span>
+    <span>Code: <span class="res-code">${esc(res.code)}</span></span>
+    <span class="muted">Der Bestand wurde um 1 Stück reduziert. Bezahlung bei der Abholung.</span>`;
+  const box = $("smsBox");
+  box.className = "sms-box";
+  box.innerHTML = `<p class="muted">Reservierung gespeichert. SMS wird vorbereitet…</p>`;
+  $("reserveSuccessDialog").showModal();
+  notifyReservation(res);
+}
+
+$("reserveOpenBtn").addEventListener("click", () => openReserveDialog());
+$("reserveClose").addEventListener("click", () => $("reserveDialog").close());
+$("reserveCancel").addEventListener("click", () => $("reserveDialog").close());
+$("reserveDate").addEventListener("change", () => refreshReservationSlots());
+$("reserveForm").addEventListener("submit", e => { e.preventDefault(); submitReservation(); });
+$("reserveSuccessClose").addEventListener("click", () => $("reserveSuccessDialog").close());
+
+/* ───────── Reservations (admin) ───────── */
+function isPastPickup(r) {
+  const now = zurichParts();
+  if (!r.pickupDate) return false;
+  if (r.pickupDate < now.date) return true;
+  if (r.pickupDate > now.date) return false;
+  return minutesOf(r.pickupEnd || "23:59") < now.minutes;
+}
+function smsStateLabel(status) {
+  return ({
+    sent: ["ok", "SMS gesendet"],
+    failed: ["bad", "SMS fehlgeschlagen"],
+    sending: ["warn", "SMS läuft"],
+    pending: ["warn", "SMS offen"]
+  })[status] || ["warn", "SMS offen"];
+}
+function renderReservations() {
+  const list = $("reservationList");
+  if (!list) return;
+  const sorted = state.reservations.slice().sort((a, b) => {
+    const ak = `${a.pickupDate || ""} ${a.pickupStart || ""}`;
+    const bk = `${b.pickupDate || ""} ${b.pickupStart || ""}`;
+    return ak.localeCompare(bk);
+  });
+  if ($("reservationCount")) $("reservationCount").textContent = sorted.length;
+  if (!sorted.length) {
+    list.innerHTML = `<p class="muted">Keine offenen Reservierungen.</p>`;
+    return;
+  }
+  list.innerHTML = sorted.map(r => {
+    const [smsClass, smsLabel] = smsStateLabel(r.smsStatus);
+    const overdue = isPastPickup(r);
+    const liveItem = state.items.find(i => i.id === r.itemId);
+    const itemName = (liveItem && liveItem.name) || r.itemName;
+    const customer = r.customerName ? `Kunde: ${esc(r.customerName)}` : "Kunde: —";
+    const phone = r.customerPhone ? ` · ${esc(r.customerPhone)}` : "";
+    return `<article class="reservation${overdue ? " overdue" : ""}" data-id="${esc(r.id)}">
+      <div class="res-main">
+        <strong>1× ${esc(itemName)}</strong>
+        <span class="res-meta">Abholung: ${esc(r.pickupLabel || `${r.pickupDate || ""} ${r.pickupStart || ""}–${r.pickupEnd || ""}`)}${overdue ? " · überfällig" : ""}</span>
+        <span class="res-meta">${customer}${phone}</span>
+        <span class="res-code">Code ${esc(r.code || "—")}</span>
+      </div>
+      <span class="sms-state ${smsClass}">${smsLabel}</span>
+      <div class="res-actions">
+        <button class="btn secondary small" type="button" data-res-action="pickedUp" data-id="${esc(r.id)}">Abgeholt</button>
+        <button class="btn danger small" type="button" data-res-action="cancel" data-id="${esc(r.id)}">Stornieren</button>
+      </div>
+    </article>`;
+  }).join("");
+}
+
+async function completeReservation(r) {
+  if (!state.isAdmin) return;
+  if (!confirm(`Abholung von „${r.itemName}“ bestätigen? Der Gewinn wird dazugebucht.`)) return;
+  const item = state.items.find(i => i.id === r.itemId);
+  const margin = item ? marginOf(item) : 0;
+  let changed = false;
+  try {
+    await runTransaction(db, async tx => {
+      const ref = doc(db, "reservations", r.id);
+      const snap = await tx.get(ref);
+      if (!snap.exists() || snap.data().status !== "pending") return;
+      tx.update(ref, { status: "pickedUp", pickedUpAt: serverTimestamp() });
+      if (margin) tx.set(statsRef(), { profit: increment(round2(margin)), updatedAt: serverTimestamp() }, { merge: true });
+      changed = true;
+    });
+    if (changed) toast(`Abgeholt: ${r.itemName}`);
+  } catch (err) {
+    console.error(err);
+    toast(`Reservierung konnte nicht abgeschlossen werden${err && err.code ? ` (${err.code})` : ""}`);
+  }
+}
+
+async function cancelReservation(r) {
+  if (!state.isAdmin) return;
+  if (!confirm(`Reservierung von „${r.itemName}“ stornieren? 1 Stück wird zurückgebucht.`)) return;
+  let changed = false;
+  try {
+    await runTransaction(db, async tx => {
+      const resRef = doc(db, "reservations", r.id);
+      const rs = await tx.get(resRef);
+      if (!rs.exists() || rs.data().status !== "pending") return;
+      const itemRef = doc(db, "inventory", r.itemId);
+      const is = await tx.get(itemRef);
+      tx.update(resRef, { status: "cancelled", cancelledAt: serverTimestamp() });
+      if (is.exists()) tx.update(itemRef, { quantity: qtyOf(is.data()) + 1, updatedAt: serverTimestamp() });
+      changed = true;
+    });
+    if (changed) toast(`Storniert: ${r.itemName}`);
+  } catch (err) {
+    console.error(err);
+    toast(`Reservierung konnte nicht storniert werden${err && err.code ? ` (${err.code})` : ""}`);
+  }
+}
+
+$("reservationList").addEventListener("click", e => {
+  const b = e.target.closest("button[data-res-action]");
+  if (!b || !state.isAdmin) return;
+  const r = state.reservations.find(x => x.id === b.dataset.id);
+  if (!r) return;
+  b.disabled = true;
+  if (b.dataset.resAction === "pickedUp") completeReservation(r).finally(() => { b.disabled = false; });
+  if (b.dataset.resAction === "cancel") cancelReservation(r).finally(() => { b.disabled = false; });
+});
+
+/* ───────── Wishlist ───────── */
+function formatWishDate(ts) {
+  try {
+    const d = ts && ts.toDate ? ts.toDate() : null;
+    return d ? new Intl.DateTimeFormat("de-CH", { dateStyle: "medium", timeStyle: "short" }).format(d) : "";
+  } catch { return ""; }
+}
+function renderWishes() {
+  const list = $("wishList");
+  if (!list) return;
+  if ($("wishCount")) $("wishCount").textContent = state.wishes.length;
+  if (!state.wishes.length) {
+    list.innerHTML = `<p class="muted">Keine offenen Wünsche.</p>`;
+    return;
+  }
+  const sorted = state.wishes.slice().sort((a, b) => {
+    const at = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+    const bt = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+    return bt - at;
+  });
+  list.innerHTML = sorted.map(w => `<article class="wish" data-id="${esc(w.id)}">
+    <div class="res-main">
+      <strong>${esc(w.name)}</strong>
+      ${w.note ? `<span class="res-meta">${esc(w.note)}</span>` : ""}
+      <span class="res-meta">${esc(formatWishDate(w.createdAt))}</span>
+    </div>
+    <div class="res-actions">
+      <button class="btn secondary small" type="button" data-wish-action="done" data-id="${esc(w.id)}">Erledigt</button>
+      <button class="btn danger small" type="button" data-wish-action="delete" data-id="${esc(w.id)}">Löschen</button>
+    </div>
+  </article>`).join("");
+}
+
+$("wishOpenBtn").addEventListener("click", () => {
+  $("wishForm").reset();
+  $("wishError").textContent = "";
+  $("wishDialog").showModal();
+  $("wishName").focus();
+});
+$("wishClose").addEventListener("click", () => $("wishDialog").close());
+$("wishCancel").addEventListener("click", () => $("wishDialog").close());
+$("wishForm").addEventListener("submit", async e => {
+  e.preventDefault();
+  if ($("wishTrap").value) { $("wishDialog").close(); toast("Danke!"); return; }
+  const name = $("wishName").value.trim();
+  const note = $("wishNote").value.trim();
+  if (!name) { $("wishError").textContent = "Bitte gib einen Artikel an."; return; }
+  const btn = $("wishSubmit");
+  btn.disabled = true;
+  $("wishError").textContent = "";
+  try {
+    await addDoc(collection(db, "wishes"), {
+      name: name.slice(0, 80),
+      note: note.slice(0, 200),
+      status: "open",
+      createdAt: serverTimestamp()
+    });
+    $("wishDialog").close();
+    toast("Danke! Dein Wunsch ist gespeichert.");
+  } catch (err) {
+    console.error(err);
+    $("wishError").textContent = err && err.code === "permission-denied"
+      ? "Wunsch konnte nicht gespeichert werden. Bitte firestore.rules veröffentlichen."
+      : `Wunsch konnte nicht gespeichert werden${err && err.code ? ` (${err.code})` : ""}.`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("wishList").addEventListener("click", async e => {
+  const b = e.target.closest("button[data-wish-action]");
+  if (!b || !state.isAdmin) return;
+  const w = state.wishes.find(x => x.id === b.dataset.id);
+  if (!w) return;
+  b.disabled = true;
+  try {
+    if (b.dataset.wishAction === "done") {
+      await updateDoc(doc(db, "wishes", w.id), { status: "done", doneAt: serverTimestamp() });
+      toast("Wunsch erledigt");
+    } else {
+      await deleteDoc(doc(db, "wishes", w.id));
+      toast("Wunsch gelöscht");
+    }
+  } catch (err) {
+    console.error(err);
+    toast(`Wunsch konnte nicht aktualisiert werden${err && err.code ? ` (${err.code})` : ""}`);
+  } finally {
+    b.disabled = false;
+  }
+});
+
+/* ───────── Twint info ───────── */
+$("twintBtn").addEventListener("click", () => {
+  $("twintNumber").textContent = SHOP_CONFIG.twintNumber || SHOP_CONFIG.contactPhone || "";
+  const linkBox = $("twintLinkBox");
+  if (SHOP_CONFIG.twintLink) {
+    linkBox.innerHTML = `<a class="btn primary" href="${esc(SHOP_CONFIG.twintLink)}" target="_blank" rel="noopener">Twint-Zahlung öffnen</a>`;
+  } else {
+    linkBox.innerHTML = "";
+  }
+  $("twintDialog").showModal();
+});
+$("closeTwint").addEventListener("click", () => $("twintDialog").close());
+$("twintClose").addEventListener("click", () => $("twintDialog").close());
+$("copyTwint").addEventListener("click", async () => {
+  const number = $("twintNumber").textContent;
+  try {
+    await navigator.clipboard.writeText(number);
+    toast("Twint-Nummer kopiert");
+  } catch {
+    window.prompt("Twint-Nummer kopieren:", number);
+  }
+});
+
 /* ───────── Rendering ───────── */
 function visibleItems() {
   const term = $("searchInput").value.trim().toLowerCase();
@@ -407,6 +1035,8 @@ function render() {
     }
   }
   $("resultCount").textContent = items.length !== total ? `Showing ${items.length} of ${total}` : "";
+
+  if ($("reserveDialog").open) refreshReservationItems();
 }
 
 $("itemList").addEventListener("click", e => {
@@ -462,10 +1092,10 @@ const initialTheme = savedTheme || ((window.matchMedia && window.matchMedia("(pr
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   const light = theme === "light";
-  $("themeIcon").textContent = light ? "☾" : "☀";
+  $("themeIcon").textContent = light ? "Dark" : "Light";
   $("themeToggle").setAttribute("aria-label", light ? "Switch to dark mode" : "Switch to light mode");
   $("themeToggle").title = light ? "Switch to dark mode" : "Switch to light mode";
-  document.querySelector('meta[name="theme-color"]').content = light ? "#fff8f1" : "#0d0905";
+  document.querySelector('meta[name="theme-color"]').content = light ? "#efe9db" : "#171512";
 }
 applyTheme(initialTheme);
 $("themeToggle").addEventListener("click", () => {
@@ -473,5 +1103,10 @@ $("themeToggle").addEventListener("click", () => {
   store.set(THEME_KEY, next);
   applyTheme(next);
 });
+
+/* ───────── Boot ───────── */
+updateOpenBadge();
+setInterval(updateOpenBadge, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) updateOpenBadge(); });
 
 render();

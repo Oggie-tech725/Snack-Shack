@@ -7,6 +7,98 @@ service cloud.firestore {
           && request.auth.uid == "LUwBJEq0U6aGIfnURDmcn6HaTd73";
     }
 
+    /* A public reservation is written in one transaction together with
+       a -1 stock change. getAfter()/existsAfter() make sure the inventory
+       update cannot happen without the matching reservation document. */
+    function reservationAfter(reservationId) {
+      return getAfter(/databases/$(database)/documents/reservations/$(reservationId)).data;
+    }
+    function existsReservationAfter(reservationId) {
+      return existsAfter(/databases/$(database)/documents/reservations/$(reservationId));
+    }
+    function inventoryBefore(itemId) {
+      return get(/databases/$(database)/documents/inventory/$(itemId)).data;
+    }
+    function inventoryAfter(itemId) {
+      return getAfter(/databases/$(database)/documents/inventory/$(itemId)).data;
+    }
+    function isPublicReservation(itemId) {
+      return request.resource.data.keys().hasAll(["quantity", "updatedAt", "lastReservationId"])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["quantity", "updatedAt", "lastReservationId"])
+          && resource.data.quantity is int
+          && request.resource.data.quantity is int
+          && request.resource.data.quantity == resource.data.quantity - 1
+          && request.resource.data.quantity >= 0
+          && request.resource.data.lastReservationId is string
+          && request.resource.data.lastReservationId.size() > 0
+          && request.resource.data.lastReservationId.size() <= 128
+          && request.resource.data.lastReservationId.matches('^[A-Za-z0-9_-]+$')
+          && existsReservationAfter(request.resource.data.lastReservationId)
+          && reservationAfter(request.resource.data.lastReservationId).itemId == itemId
+          && reservationAfter(request.resource.data.lastReservationId).quantity == 1
+          && reservationAfter(request.resource.data.lastReservationId).stockAfter == request.resource.data.quantity
+          && reservationAfter(request.resource.data.lastReservationId).status == "pending";
+    }
+
+    function validReservationCreate(reservationId) {
+      return request.resource.data.keys().hasOnly([
+            "itemId", "itemName", "quantity", "stockAfter", "pickupDate", "pickupStart",
+            "pickupEnd", "pickupLabel", "customerName", "customerPhone",
+            "code", "status", "smsStatus", "source", "createdAt"
+          ])
+          && request.resource.data.itemId is string
+          && request.resource.data.itemId.size() > 0
+          && request.resource.data.itemId.size() <= 128
+          && request.resource.data.itemId.matches('^[A-Za-z0-9_-]+$')
+          && existsAfter(/databases/$(database)/documents/inventory/$(request.resource.data.itemId))
+          && inventoryBefore(request.resource.data.itemId).quantity is int
+          && inventoryAfter(request.resource.data.itemId).quantity == inventoryBefore(request.resource.data.itemId).quantity - 1
+          && inventoryAfter(request.resource.data.itemId).lastReservationId == reservationId
+          && request.resource.data.itemName is string
+          && request.resource.data.itemName.size() > 0
+          && request.resource.data.itemName.size() <= 80
+          && request.resource.data.quantity is int
+          && request.resource.data.quantity == 1
+          && request.resource.data.stockAfter is int
+          && request.resource.data.stockAfter >= 0
+          && request.resource.data.stockAfter == inventoryAfter(request.resource.data.itemId).quantity
+          && request.resource.data.pickupDate is string
+          && request.resource.data.pickupDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+          && request.resource.data.pickupStart is string
+          && request.resource.data.pickupStart.matches('^[0-9]{2}:[0-9]{2}$')
+          && request.resource.data.pickupEnd is string
+          && request.resource.data.pickupEnd.matches('^[0-9]{2}:[0-9]{2}$')
+          && (
+               (request.resource.data.pickupStart == "10:15" && request.resource.data.pickupEnd == "10:30")
+            || (request.resource.data.pickupStart == "12:05" && request.resource.data.pickupEnd == "13:00")
+            || (request.resource.data.pickupStart == "14:45" && request.resource.data.pickupEnd == "14:55")
+          )
+          && request.resource.data.pickupLabel is string
+          && request.resource.data.pickupLabel.size() > 0
+          && request.resource.data.pickupLabel.size() <= 80
+          && request.resource.data.customerName is string
+          && request.resource.data.customerName.size() <= 60
+          && request.resource.data.customerPhone is string
+          && request.resource.data.customerPhone.size() <= 30
+          && request.resource.data.code is string
+          && request.resource.data.code.matches('^[A-Z0-9]{4,10}$')
+          && request.resource.data.status == "pending"
+          && request.resource.data.smsStatus == "pending"
+          && request.resource.data.source == "public"
+          && request.resource.data.createdAt is timestamp;
+    }
+
+    function validWishCreate() {
+      return request.resource.data.keys().hasOnly(["name", "note", "status", "createdAt"])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 80
+          && request.resource.data.note is string
+          && request.resource.data.note.size() <= 200
+          && request.resource.data.status == "open"
+          && request.resource.data.createdAt is timestamp;
+    }
+
     match /inventory/{itemId} {
       allow read: if true;
       allow create: if isAdmin()
@@ -15,11 +107,26 @@ service cloud.firestore {
                     && request.resource.data.name.size() <= 80
                     && request.resource.data.quantity is int
                     && request.resource.data.quantity >= 0;
-      allow update: if isAdmin()
+      allow update: if (isAdmin()
                     && request.resource.data.name == resource.data.name
                     && request.resource.data.quantity is int
-                    && request.resource.data.quantity >= 0;
+                    && request.resource.data.quantity >= 0)
+                    || isPublicReservation(itemId);
       allow delete: if isAdmin();
+    }
+
+    // Visitors may create one reservation together with a -1 stock move.
+    // They can never read other people's reservations or change them later.
+    match /reservations/{reservationId} {
+      allow create: if validReservationCreate(reservationId);
+      allow read: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    // "Was fehlt?" — public create only, admin reads and manages.
+    match /wishes/{wishId} {
+      allow create: if validWishCreate();
+      allow read, update, delete: if isAdmin();
     }
 
     // Total profit (meta/stats): only the admin can read or write it

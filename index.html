@@ -27,7 +27,7 @@
           <div><p class="eyebrow">ADMIN ACCESS</p><h2>Sign in to edit</h2></div>
           <button id="closeLogin" class="icon-btn" type="button" aria-label="Close">✕</button>
         </div>
-        <p class="muted">Visitors can view quantities. Only the administrator can make changes.</p>
+        <p class="muted">Visitors can view and reserve items. Only the administrator can add, edit or delete products.</p>
         <label>Username<input id="username" autocomplete="username" required value="korbit"></label>
         <label>Password
           <span class="pw-wrap">
@@ -88,6 +88,99 @@
       </div>
     </dialog>
 
+    <!-- Wishlist -->
+    <dialog id="wishDialog" class="dialog">
+      <form id="wishForm">
+        <div class="dialog-head">
+          <div><p class="eyebrow">WUNSCHLISTE</p><h2>Was fehlt?</h2></div>
+          <button id="wishClose" class="icon-btn" type="button" aria-label="Schliessen">✕</button>
+        </div>
+        <p class="muted">Sag uns, welchen Snack oder Drink du gerne im Sortiment hättest.</p>
+        <label>Artikel
+          <input id="wishName" maxlength="80" required placeholder="z. B. Eistee Pfirsich" autocomplete="off">
+        </label>
+        <label>Notiz <span class="optional">optional</span>
+          <textarea id="wishNote" maxlength="200" rows="3" placeholder="Marke, Grösse, Geschmack …"></textarea>
+        </label>
+        <div class="hp" aria-hidden="true"><label>Website<input id="wishTrap" tabindex="-1" autocomplete="off"></label></div>
+        <p id="wishError" class="error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="wishCancel" class="btn secondary" type="button">Abbrechen</button>
+          <button id="wishSubmit" class="btn primary" type="submit">Wunsch senden</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Reservation -->
+    <dialog id="reserveDialog" class="dialog">
+      <form id="reserveForm">
+        <div class="dialog-head">
+          <div><p class="eyebrow">RESERVIERUNG</p><h2>Artikel reservieren</h2></div>
+          <button id="reserveClose" class="icon-btn" type="button" aria-label="Schliessen">✕</button>
+        </div>
+        <p class="muted">Wähle Artikel und Abholzeit. Der Artikel wird für dich um 1 Stück reduziert; bezahlt wird bei der Abholung.</p>
+        <label>Artikel
+          <select id="reserveItem" required></select>
+        </label>
+        <div class="field-row">
+          <label>Abholdatum
+            <input id="reserveDate" type="date" required>
+          </label>
+          <label>Zeitfenster
+            <select id="reserveSlot" required></select>
+          </label>
+        </div>
+        <p id="reserveHint" class="muted reserve-hint"></p>
+        <div class="field-row">
+          <label>Name <span class="optional">optional</span>
+            <input id="reserveName" maxlength="60" autocomplete="name" placeholder="Dein Name">
+          </label>
+          <label>Handy <span class="optional">optional</span>
+            <input id="reservePhone" type="tel" maxlength="30" autocomplete="tel" placeholder="+41 …">
+          </label>
+        </div>
+        <div class="hp" aria-hidden="true"><label>Website<input id="reserveTrap" tabindex="-1" autocomplete="off"></label></div>
+        <p id="reserveError" class="error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="reserveCancel" class="btn secondary" type="button">Abbrechen</button>
+          <button id="reserveSubmit" class="btn primary" type="submit">Reservierung abschicken</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Reservation confirmation + SMS -->
+    <dialog id="reserveSuccessDialog" class="dialog">
+      <div class="dialog-body">
+        <p class="eyebrow">RESERVIERUNG</p>
+        <h2 id="reserveSuccessTitle">Reserviert!</h2>
+        <div id="reserveSuccessSummary" class="res-summary"></div>
+        <div id="smsBox" class="sms-box"></div>
+        <div class="dialog-actions">
+          <button id="reserveSuccessClose" class="btn primary" type="button">Fertig</button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- Twint -->
+    <dialog id="twintDialog" class="dialog dialog-sm">
+      <div class="dialog-body">
+        <div class="dialog-head">
+          <div><p class="eyebrow">TWINT</p><h2>Twint-Zahlung</h2></div>
+          <button id="closeTwint" class="icon-btn" type="button" aria-label="Schliessen">✕</button>
+        </div>
+        <p class="muted">Öffne die Twint-App und sende den Betrag an diese Nummer. Bitte gib den Artikel als Mitteilung an.</p>
+        <div class="copy-row">
+          <code id="twintNumber">+41 76 501 68 35</code>
+          <button id="copyTwint" class="btn secondary small" type="button">Kopieren</button>
+        </div>
+        <div id="twintLinkBox"></div>
+        <p class="muted text-small">Die Zahlung erfolgt erst bei der Abholung – die Reservierung ist kostenlos.</p>
+        <div class="dialog-actions">
+          <button id="twintClose" class="btn secondary" type="button">Schliessen</button>
+        </div>
+      </div>
+    </dialog>
+
     <section id="appView" class="app">
       <header class="topbar">
         <div class="brand">
@@ -96,7 +189,7 @@
         </div>
         <div class="userbox">
           <span id="syncPill" class="sync-pill" data-state="connecting"><span class="sync-dot"></span><span id="syncStatus">Connecting…</span></span>
-          <span id="modeBadge" class="mode-badge">View only</span>
+          <span id="modeBadge" class="mode-badge">Guest</span>
           <button id="loginOpenBtn" class="btn secondary small" type="button">Admin login</button>
           <button id="logoutBtn" class="btn secondary small hidden" type="button">Sign out</button>
         </div>
@@ -106,11 +199,17 @@
         <div class="hero-copy">
           <h1>Live Snack Inventory</h1>
           <p class="muted">What’s in stock right now.</p>
+          <div class="hero-actions">
+            <button id="reserveOpenBtn" class="btn primary" type="button">Artikel reservieren</button>
+            <button id="wishOpenBtn" class="btn secondary" type="button">Was fehlt?</button>
+          </div>
         </div>
         <div class="payment" aria-label="Payment methods">
           <span class="payment-label">PAYMENT</span>
           <div class="payment-methods">
-            <span class="payment-chip twint"><span class="payment-icon"><img src="Twint.png" alt="" width="25" height="25"></span>Twint</span>
+            <button id="twintBtn" class="payment-chip twint" type="button" aria-label="Twint payment information">
+              <span class="payment-icon"><img src="Twint.png" alt="" width="25" height="25"></span>Twint
+            </button>
             <span class="payment-or">or</span>
             <span class="payment-chip cash"><span class="payment-icon">CHF</span>Cash</span>
           </div>
@@ -121,9 +220,14 @@
       <section class="info-panel panel">
         <span class="info-label">CONTACT &amp; OPENING HOURS</span>
         <div class="info-body">
+          <span id="openBadge" class="open-badge" data-state="closed" title="">
+            <span class="open-dot" aria-hidden="true"></span>
+            <span id="openBadgeText">Öffnungszeiten</span>
+          </span>
+          <span class="info-sep">•</span>
           <span><strong>Contact:</strong> +41 76 501 68 35</span>
           <span class="info-sep">•</span>
-          <span><strong>Opening hours:</strong> Every day 12:05–13:00, 10:15–10:30, 14:45–14:55</span>
+          <span><strong>Opening hours:</strong> Every day 10:15–10:30, 12:05–13:00, 14:45–14:55</span>
         </div>
       </section>
 
@@ -140,6 +244,28 @@
           </div>
           <strong id="statProfit">0.00 CHF</strong>
         </div>
+      </section>
+
+      <!-- Admin: reservations and wishlist -->
+      <section class="admin-stack admin-only hidden" aria-label="Reservations and wishlist">
+        <section class="panel admin-panel">
+          <div class="admin-panel-head">
+            <div>
+              <p class="eyebrow">RESERVIERUNGEN</p>
+              <h2>Abholungen <span id="reservationCount" class="count-pill">0</span></h2>
+            </div>
+          </div>
+          <div id="reservationList" class="res-list"><p class="muted">Lädt…</p></div>
+        </section>
+        <section class="panel admin-panel">
+          <div class="admin-panel-head">
+            <div>
+              <p class="eyebrow">WUNSCHLISTE</p>
+              <h2>Was fehlt? <span id="wishCount" class="count-pill">0</span></h2>
+            </div>
+          </div>
+          <div id="wishList" class="wish-list"><p class="muted">Lädt…</p></div>
+        </section>
       </section>
 
       <section class="toolbar panel" aria-label="Search and filters">
